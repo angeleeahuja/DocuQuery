@@ -1,6 +1,7 @@
 import os
 import fitz
 import mimetypes
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -12,13 +13,26 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 
-
 def get_text_from_pdf(uploaded_file):
     pdf_bytes = uploaded_file.getvalue()
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     text = ""
     for page in doc:
         text += page.get_text()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=1000)
+    chunks = text_splitter.split_text(text)
+    return chunks
+
+def get_text_from_csv(uploaded_file):
+    df = pd.read_csv(uploaded_file)
+    text = df.to_string()  
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=1000)
+    chunks = text_splitter.split_text(text)
+    return chunks
+
+def get_text_from_excel(uploaded_file):
+    df = pd.read_excel(uploaded_file)
+    text = df.to_string() 
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=1000)
     chunks = text_splitter.split_text(text)
     return chunks
@@ -56,8 +70,7 @@ def get_conversational_chain(vector_store):
         "You are an assistant for question-answering tasks. "
         "Use the following pieces of retrieved context to answer "
         "the question. If you don't know the answer, say that you "
-        "don't know. Use three sentences maximum and keep the "
-        "answer concise."
+        "don't know. Keep the answer concise."
         "\n\n"
         "{context}"
     )
@@ -94,17 +107,36 @@ def main():
         st.session_state.conversational_chain = None
 
     user_prompt = st.chat_input("Your message here...")
-    uploaded_file = st.sidebar.file_uploader('Upload Files', type=['pdf'])
+    uploaded_file = st.sidebar.file_uploader('Upload Files', type=['pdf', 'csv', 'xlsx'])
     if uploaded_file is not None:
         mime_type = mimetypes.guess_type(uploaded_file.name)[0]
         if mime_type == 'application/pdf':
-            text = get_text_from_pdf(uploaded_file)
-            vector_store = get_vector_store(text)
-            st.session_state.conversational_chain = get_conversational_chain(vector_store)
-            st.sidebar.success("PDF processed successfully.")
+            text_chunks = get_text_from_pdf(uploaded_file)
+        elif mime_type == 'text/csv':
+            text_chunks = get_text_from_csv(uploaded_file)
+        elif mime_type in ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']:
+            text_chunks = get_text_from_excel(uploaded_file)
         else:
             st.sidebar.write("Unsupported file type.")
+            return
+
+        vector_store = get_vector_store(text_chunks)
+        st.session_state.conversational_chain = get_conversational_chain(vector_store)
+        st.sidebar.success("File processed successfully.")
     
+    if user_prompt and st.session_state.conversational_chain:
+        response = process_chat(st.session_state.conversational_chain, user_prompt, st.session_state.chat_history)
+        assistant_message = f"{response}"
+
+        st.session_state.chat_history.append(HumanMessage(content=user_prompt))
+        st.session_state.chat_history.append(AIMessage(content=response))
+
+        with st.chat_message("user"):
+            st.write(user_prompt)
+
+        with st.chat_message("assistant"):
+            st.write(assistant_message)
+            
     for message in st.session_state.chat_history:
         if isinstance(message, HumanMessage):
             with st.chat_message("user"):
@@ -112,19 +144,5 @@ def main():
         elif isinstance(message, AIMessage):
             with st.chat_message("assistant"):
                 st.write(message.content)
-
-    if user_prompt and st.session_state.conversational_chain:
-            response = process_chat(st.session_state.conversational_chain, user_prompt, st.session_state.chat_history)
-            assistant_message = f"{response}"
-
-            st.session_state.chat_history.append(HumanMessage(content=user_prompt))
-            st.session_state.chat_history.append(AIMessage(content=response))
-
-            with st.chat_message("user"):
-                st.write(user_prompt)
-
-            with st.chat_message("assistant"):
-                st.write(assistant_message)
-    
 if __name__ == '__main__':
     main()
