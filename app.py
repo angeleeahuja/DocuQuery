@@ -98,7 +98,7 @@ def main():
     genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
 
     st.set_page_config(page_title='DocuQuery', page_icon='🤖', layout='wide')
-    st.sidebar.title('TalkieAI')
+    st.sidebar.title('DocuQuery')
 
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
